@@ -1,0 +1,123 @@
+"""LLM client with an OpenAI-backed implementation and an offline mock fallback.
+
+If OPENAI_API_KEY is not configured, the client falls back to a deterministic,
+extractive "mock LLM" that synthesizes an answer directly from the retrieved
+service manual chunks. This keeps the whole assistant runnable end-to-end with
+no external dependency or cost for local demos, tests, and grading.
+"""
+from __future__ import annotations
+
+from typing import Any
+
+from app.core.config import settings
+from app.core.logging_config import app_logger
+from app.llm.prompt_registry import get_prompt_module
+
+
+class LLMClient:
+    def __init__(self) -> None:
+        self._client = None
+
+    @property
+    def is_live(self) -> bool:
+        return bool(settings.openai_api_key)
+
+    def _get_client(self):
+        if self._client is None:
+            if settings.use_azure:
+                from openai import AzureOpenAI
+
+                self._client = AzureOpenAI(
+                    api_key=settings.openai_api_key,
+                    azure_endpoint=settings.openai_base_url,
+                    api_version=settings.azure_api_version,
+                )
+            else:
+                from openai import OpenAI
+
+                self._client = OpenAI(api_key=settings.openai_api_key, base_url=settings.openai_base_url)
+        return self._client
+
+    def answer(self, query: str, chunks: list[Any], prompt_version: str | None = None) -> str:
+        prompt_version = prompt_version or settings.prompt_version
+        prompt_module = get_prompt_module(prompt_version)
+        user_prompt = prompt_module.build_user_prompt(query, chunks)
+
+        if self.is_live:
+            try:
+                return self._generate_openai(prompt_module.SYSTEM_PROMPT, user_prompt)
+            except Exception as exc:  # noqa: BLE001 - fall back gracefully on any API error
+                app_logger.warning("OpenAI call failed (%s); falling back to mock LLM.", exc)
+                return self._mock_answer(query, chunks)
+
+        return self._mock_answer(query, chunks)
+
+    def _generate_openai(self, system_prompt: str, user_prompt: str) -> str:
+        client = self._get_client()
+        kwargs: dict = {
+            "model": settings.openai_model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+        }
+        # Some newer Azure models (e.g. gpt-5.x) only accept the default temperature.
+        if not settings.use_azure:
+            kwargs["temperature"] = 0.2
+        response = client.chat.completions.create(**kwargs)
+        return response.choices[0].message.content or ""
+
+    def _mock_answer(self, query: str, chunks: list[Any]) -> str:
+        """Deterministic extractive fallback used when no LLM API key is configured."""
+        if not chunks:
+            return (
+                "I don't have enough information in the service manuals to answer this "
+                "confidently. Please consult a certified technician or provide the exact "
+                "diagnostic code."
+            )
+
+        causes: list[str] = []
+        steps: list[str] = []
+        citations: list[str] = []
+
+        for i, chunk in enumerate(chunks, start=1):
+            citations.append(f"[C{i}] {chunk.doc_file} (section: {chunk.heading})")
+            heading_lower = chunk.heading.lower()
+            body = chunk.text.split("\n", 1)[-1] if "\n" in chunk.text else chunk.text
+            bullet_lines = [line.strip("- ").strip() for line in body.splitlines() if line.strip().startswith("-")]
+            numbered_lines = [
+                line.split(".", 1)[-1].strip()
+                for line in body.splitlines()
+                if line.strip()[:2].rstrip(".").isdigit()
+            ]
+
+            if "cause" in heading_lower:
+                causes.extend(f"{line} [C{i}]" for line in (bullet_lines or [body])[:4])
+            elif "diagnostic" in heading_lower or "step" in heading_lower or "recommended" in heading_lower:
+                steps.extend(f"{line} [C{i}]" for line in (numbered_lines or bullet_lines or [body])[:4])
+            else:
+                # Generic section (e.g. Description/Safety Notes) - surface briefly as extra context.
+                causes.extend(f"{line} [C{i}]" for line in (bullet_lines or [])[:2])
+
+        if not causes:
+            causes = [f"See retrieved context {citations[0] if citations else ''}"]
+        if not steps:
+            steps = ["Consult the cited service manual section(s) below for full diagnostic steps."]
+
+        lines = ["Possible Causes:"]
+        lines.extend(f"- {c}" for c in causes)
+        lines.append("")
+        lines.append("Recommended Next Steps:")
+        lines.extend(f"{idx}. {s}" for idx, s in enumerate(steps, start=1))
+        lines.append("")
+        lines.append("Citations:")
+        lines.extend(citations)
+        lines.append("")
+        lines.append(
+            "(Generated by offline extractive fallback - no LLM API key configured. "
+            "Set OPENAI_API_KEY in .env for full generative explanations.)"
+        )
+        return "\n".join(lines)
+
+
+llm_client = LLMClient()
