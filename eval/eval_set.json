@@ -1,0 +1,22 @@
+[
+  {"query": "P0300", "expected_code": "P0300"},
+  {"query": "car shakes at idle and check engine light is flashing", "expected_code": "P0300"},
+  {"query": "P0301", "expected_code": "P0301"},
+  {"query": "single cylinder misfire on cylinder 1", "expected_code": "P0301"},
+  {"query": "P0171", "expected_code": "P0171"},
+  {"query": "poor fuel economy and hesitation on acceleration", "expected_code": "P0171"},
+  {"query": "P0420", "expected_code": "P0420"},
+  {"query": "rotten egg smell from exhaust and failed emissions test", "expected_code": "P0420"},
+  {"query": "P0128", "expected_code": "P0128"},
+  {"query": "engine takes a long time to warm up and heater is weak", "expected_code": "P0128"},
+  {"query": "P0455", "expected_code": "P0455"},
+  {"query": "fuel smell near the vehicle and loose gas cap", "expected_code": "P0455"},
+  {"query": "P0505", "expected_code": "P0505"},
+  {"query": "car stalls at stops with unstable idle speed", "expected_code": "P0505"},
+  {"query": "C0035", "expected_code": "C0035"},
+  {"query": "ABS light and traction control light on", "expected_code": "C0035"},
+  {"query": "B1342", "expected_code": "B1342"},
+  {"query": "power windows and central locking failing at the same time", "expected_code": "B1342"},
+  {"query": "U0100", "expected_code": "U0100"},
+  {"query": "car won't start intermittently with multiple warning lights", "expected_code": "U0100"}
+]
